@@ -1,4 +1,5 @@
 import * as postService from "./post.services.js";
+import { uploadImageBuffer } from "../../config/cloudinary.js";
 
 export const getFeed = async (req, res) => {
   try {
@@ -20,12 +21,20 @@ export const getUserPost = async (req, res) => {
 
 export const createPost = async (req, res) => {
   try {
-    const { caption, image } = req.body;
-    if (!caption || !image) {
-      return res.status(400).json({ error: "caption and image are required" });
+    const caption = req.body?.caption?.trim();
+    if (!caption) {
+      return res.status(400).json({ error: "caption is required" });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: "image file is required" });
     }
 
-    const post = await postService.createPostService({ caption, image });
+    const uploaded = await uploadImageBuffer(req.file.buffer);
+
+    const post = await postService.createPostService({
+      caption,
+      image: uploaded.secure_url,
+    });
     res.status(201).json(post);
   } catch (err) {
     res.status(500).json({ error: err.message });

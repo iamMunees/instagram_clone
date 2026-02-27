@@ -6,11 +6,12 @@ import {
   getUserPost,
   likePost,
 } from "./post.controller.js";
+import { uploadPostImage } from "./post.upload.js";
 
 const router = Router();
 
 router.get("/posts", getFeed);
-router.post("/posts", createPost);
+router.post("/posts", uploadPostImage.single("image"), createPost);
 router.get("/posts/user/:userId", getUserPost);
 router.post("/posts/:postId/like", likePost);
 router.post("/posts/:postId/comments", addComment);
