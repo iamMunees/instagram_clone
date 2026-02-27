@@ -10,13 +10,142 @@ const raw = fs.readFileSync(dataPath, "utf-8");
 const store = JSON.parse(raw);
 const nowIso = () => new Date().toISOString();
 
+const STORY_TTL_HOURS = 24;
+const STORY_TTL_MS = STORY_TTL_HOURS * 60 * 60 * 1000;
+const STORY_DEFAULT_DURATION_SECONDS = 8;
+const STORY_MIN_DURATION_SECONDS = 5;
+const STORY_MAX_DURATION_SECONDS = 30;
+
+const addMs = (isoDate, ms) => new Date(new Date(isoDate).getTime() + ms).toISOString();
+
+const normalizeStory = (story) => {
+  const createdAt = story.createdAt || story.timestamp || nowIso();
+  const expiresAt = story.expiresAt || addMs(createdAt, STORY_TTL_MS);
+  const durationSeconds = Number(story.durationSeconds) || STORY_DEFAULT_DURATION_SECONDS;
+
+  return {
+    ...story,
+    createdAt,
+    expiresAt,
+    durationSeconds,
+    song: story.song || "",
+    filter: story.filter || "none",
+  };
+};
+
+const isStoryActive = (story) => new Date(story.expiresAt).getTime() > Date.now();
+
+const pruneExpiredStories = () => {
+  const stories = (store.story || []).map(normalizeStory);
+  store.story = stories.filter(isStoryActive);
+  return store.story;
+};
+
+const getCurrentUsername = () => getCurrentProfile()?.username || "";
+
 export const getPosts = () => store.posts || [];
-export const getStories = () => store.story || [];
-export const getStoryById = (id) =>
-  getStories().find((story) => Number(story.id) === Number(id)) || null;
 export const getProfiles = () => store.profile || [];
 export const getSuggestions = () => store.suggetion || [];
 export const getCurrentProfile = () => getProfiles()[0] || null;
+
+export const getStories = () => {
+  const myUsername = getCurrentUsername();
+
+  return pruneExpiredStories()
+    .map((story) => {
+      const normalized = normalizeStory(story);
+      return {
+        ...normalized,
+        isOwner: normalized.user?.username === myUsername,
+      };
+    })
+    .sort((a, b) => {
+      if (a.isOwner !== b.isOwner) {
+        return a.isOwner ? -1 : 1;
+      }
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+};
+
+export const getStoryById = (id) =>
+  getStories().find((story) => Number(story.id) === Number(id)) || null;
+
+export const createStory = ({ image, durationSeconds, song, filter }) => {
+  const me = getCurrentProfile();
+  if (!me) {
+    throw new Error("No profile available");
+  }
+
+  const parsedDuration =
+    durationSeconds === undefined || durationSeconds === null || durationSeconds === ""
+      ? STORY_DEFAULT_DURATION_SECONDS
+      : Number(durationSeconds);
+
+  if (
+    Number.isNaN(parsedDuration) ||
+    parsedDuration < STORY_MIN_DURATION_SECONDS ||
+    parsedDuration > STORY_MAX_DURATION_SECONDS
+  ) {
+    const err = new Error(
+      `durationSeconds must be between ${STORY_MIN_DURATION_SECONDS} and ${STORY_MAX_DURATION_SECONDS}`
+    );
+    err.code = "INVALID_STORY_DURATION";
+    throw err;
+  }
+
+  pruneExpiredStories();
+
+  const nextId = (store.story || []).reduce(
+    (maxId, item) => Math.max(maxId, Number(item.id) || 0),
+    0
+  ) + 1;
+
+  const createdAt = nowIso();
+  const story = {
+    id: nextId,
+    user: {
+      id: me.id,
+      username: me.username,
+      profile_pic: me.profile_pic,
+    },
+    image,
+    createdAt,
+    expiresAt: addMs(createdAt, STORY_TTL_MS),
+    durationSeconds: parsedDuration,
+    song: song || "",
+    filter: filter || "none",
+  };
+
+  if (!Array.isArray(store.story)) {
+    store.story = [];
+  }
+
+  store.story.unshift(story);
+
+  return {
+    ...story,
+    isOwner: true,
+  };
+};
+
+export const deleteStoryById = (id) => {
+  pruneExpiredStories();
+  const myUsername = getCurrentUsername();
+
+  const stories = store.story || [];
+  const index = stories.findIndex((story) => Number(story.id) === Number(id));
+
+  if (index === -1) {
+    return { status: "not_found" };
+  }
+
+  if (stories[index]?.user?.username !== myUsername) {
+    return { status: "forbidden" };
+  }
+
+  const [deletedStory] = stories.splice(index, 1);
+  return { status: "deleted", story: normalizeStory(deletedStory) };
+};
 
 export const createPost = ({ caption, image }) => {
   const me = getCurrentProfile();
@@ -175,4 +304,10 @@ export const getNotifications = () => {
   return items
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 20);
+};
+
+export const STORY_DURATION_LIMITS = {
+  min: STORY_MIN_DURATION_SECONDS,
+  max: STORY_MAX_DURATION_SECONDS,
+  default: STORY_DEFAULT_DURATION_SECONDS,
 };
